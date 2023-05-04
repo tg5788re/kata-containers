@@ -1,4 +1,4 @@
-// Copyright (c) 2022 Intel Corporation
+// Copyright (c) 2023 Alec Pemberton, Juanaiga Okugas
 //
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -7,7 +7,7 @@ use clap::{App, Arg, Parser, SubCommand, Command, Parser};
 use crate::args::{IptablesCommand};
 use reqwest::{Url};
 use std::{fs};
-use anyhow::Result;
+use anyhow::{Result, Context} ;
 use shimclient::MgmtClient;
 use args::{Commands};
 use std::process::Command;
@@ -17,14 +17,6 @@ use thiserror::Error;
 const DEFAULT_TIMEOUT: u64 = 30;
 const IP_TABLES_SOCKET: &str = "unix:///run/vc/sbs/{sandbox_id}/ip_tables";
 const IP6_TABLES_SOCKET: &str = "unix:///run/vc/sbs/{sandbox_id}/ip6_tables";
-
-//main function for error handeling
-// fn main() {
-//     if let Err(e) = new_main() {
-//         eprintln!("Error: {}", e);
-//         process::exit(1);
-//     }
-// }
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error{
@@ -46,28 +38,16 @@ pub fn verify_id(id:&str) -> Result<(), Error>{
     }
 }
 
-pub fn handle_iptables(_args: IptablesCommand) -> Result<()> {
-
-    //implement handle_iptables
-    // let args = KataCtlCli::parse();
-    // match args.command{
-    //     Commands::Iptables(args) => handle_iptables(args),
-    // }
-
-    let matches = Command::new("iptables")
-    .subcommand(Command::new("get"))
-    .subcommand(Command::new("set"))
-    .get_matches();
-
+pub fn handle_iptables(args: IptablesCommand) -> Result<()> {
     //checking for subcommand entered form user 
     match matches.subcommand() {
         Some(("get", get_matches)) => {
             // retrieve the sandbox ID from the command line arguments
-            let sandbox_id = get_matches.value_of("sandbox-id").unwrap();
-            // check if ipv6 is requested
+            let sandbox_id = get_matches.value_of("sandbox-id")?;
+
             let is_ipv6 = get_matches.is_present("v6");
-            // verify the container ID before proceeding
-            verify_id(sandbox_id)?;//validate::verify_id(sandbox_id)
+           
+            verify_id(sandbox_id)?;
             // generate the appropriate URL for the iptables request to connect Kata to agent within guest
             let url = if is_ipv6 {
                 Url::parse(&format!("{}{}", IP6_TABLES_SOCKET, sandbox_id))?
@@ -84,12 +64,12 @@ pub fn handle_iptables(_args: IptablesCommand) -> Result<()> {
         }
         Some(("set", set_matches)) => {
             // Extract sandbox ID and IPv6 flag from command-line arguments
-            let sandbox_id = set_matches.value_of("sandbox-id").unwrap();
+            let sandbox_id = set_matches.value_of("sandbox-id")?;
             let is_ipv6 = set_matches.is_present("v6");
-            let iptables_file = set_matches.value_of("file").unwrap();
+            let iptables_file = set_matches.value_of("file")?;
             
             // Verify the specified sandbox ID is valid
-            verify_id(sandbox_id)?;//verify_container_id(sandbox_id)?;
+            verify_id(sandbox_id)?;
         
             // Check if the iptables file was provided
             if iptables_file.is_empty() {
@@ -113,17 +93,15 @@ pub fn handle_iptables(_args: IptablesCommand) -> Result<()> {
             } else {
                 Url::parse(&format!("{}{}", IP_TABLES_SOCKET, sandbox_id))?
             };
-        
+
             // Create a new management client for the specified sandbox ID
-            let shim_client = match MgmtClient::new(sandbox_id, Some(DEFAULT_TIMEOUT)) {
+            let shim_client = MgmtClient::new(sandbox_id, Some(DEFAULT_TIMEOUT)).context("error creating management client") {
                 Ok(client) => client,
-                Err(e) => return Err(format!("Error creating management client: {}", e).into()),
             };
         
             // Send a PUT request to set the iptables rules
-            let response = match shim_client.put(url, content_type, &buf) {
+            let response = match shim_client.put(url, content_type, &buf).context("error sending request")? {
                 Ok(res) => res,
-                Err(e) => return Err(format!("Error sending request: {}", e).into()),
             };
         
             // Check if the request was successful
@@ -137,118 +115,5 @@ pub fn handle_iptables(_args: IptablesCommand) -> Result<()> {
             // Return Ok to indicate success
             Ok(())
         }
-        
     }
-
 }
-// Define the function signature. It returns `Result<(), Box<dyn std::error::Error>>`,
-// which means it can either return an `Ok(())` value indicating success or an `Err` value
-// containing a boxed error type that implements the `std::error::Error` trait.
-// #[derive(Parser)]
-// #[clap(name = "kata-ctl",author, about = "Get or set iptables within the Kata Containers guest")]
-// struct GetCli{
-//     #[command(subcommand)]
-//     command: GetCommand,
-// }
-
-// #[derive(Parser, Debug)]
-// struct SetCli{
-//     #[clap(subcommand)]
-//     command: SetCommands,
-// }
-
-// #[derive(Args, Debug)]
-// struct FileArgument{
-//     #[arg(value_name = "FILE", required = true, takes_value= true, help = "The iptables file to set")]
-//     file: FileArgument,
-// }
-
-
-// //Subcommands for get
-// #[derive(Subcommand, Debug)]
-// enum GetCommands {
-//     #[clap(about = "Get iptables from the Kata Containers guest")]
-//     get{
-//         #[arg(long = "sand-box", value_name = "ID", required = true, 
-//         takes_value = true, help = "The target sandbox for getting the iptables")]
-//         sandbox-id:String,
-        
-//         #[arg(long = "v6", help = "Indicate we're requesting ipv6 iptables")]
-//         v6:bool,
-
-//     }
-// }
-
-// #[derive(Subcommand, Debug)]
-// enum SetCommands{
-//     #[clap(about = "Set iptables in a specific Kata Containers guest based on file")]
-//     set{
-//         #[arg(long = "sand-box", value_name = "ID", required = true, 
-//         takes_value = true, help = "The target sandbox for setting the iptables")]
-//         sandbox-id:String,
-
-//         #[arg(long = "v6", help = "Indicate we're requesting ipv6 iptables")]
-//         v6:bool,
-//     }
-// }
-
-// #[derive(Subcommand, Debug)]
-// enum FileArgument{
-//     #[arg(value_name = "FILE", required = true, takes_value = true, help = "The iptables file to set")]
-//     file:String,
-// }
-
-
-// fn new_main() -> Result<(), Box<dyn std::error::Error>> {
-    
-
-//     // // Define the command line interface using the `clap` library.
-//     // let matches = App::new("kata-iptables") // Set the name of the program.
-//     //     .about("Get or set iptables within the Kata Containers guest") // Set a description of the program.
-//     //     .subcommand(
-//     //         SubCommand::with_name("get") // Add a subcommand named "get".
-//     //             .about("Get iptables from the Kata Containers guest") // Set a description of the "get" subcommand.
-//     //             .arg(
-//     //                 Arg::with_name("sandbox-id") // Add an argument named "sandbox-id".
-//     //                     .long("sandbox-id") // Set the long-form flag name for this argument.
-//     //                     .value_name("ID") // Set the value name that will be shown in the help message.
-//     //                     .required(true) // Indicate that this argument is required.
-//     //                     .takes_value(true) // Indicate that this argument takes a value.
-//     //                     .help("The target sandbox for getting the iptables"), // Set a description of this argument.
-//     //             )
-//     //             .arg(
-//     //                 Arg::with_name("v6") // Add an argument named "v6".
-//     //                     .long("v6") // Set the long-form flag name for this argument.
-//     //                     .help("Indicate we're requesting ipv6 iptables"), // Set a description of this argument.
-//     //             ),
-//     //     )
-//     //     .subcommand(
-//     //         SubCommand::with_name("set") // Add a subcommand named "set".
-//     //             .about("Set iptables in a specific Kata Containers guest based on file") // Set a description of the "set" subcommand.
-//     //             .arg(
-//     //                 Arg::with_name("sandbox-id") // Add an argument named "sandbox-id".
-//     //                     .long("sandbox-id") // Set the long-form flag name for this argument.
-//     //                     .value_name("ID") // Set the value name that will be shown in the help message.
-//     //                     .required(true) // Indicate that this argument is required.
-//     //                     .takes_value(true) // Indicate that this argument takes a value.
-//     //                     .help("The target sandbox for setting the iptables"), // Set a description of this argument.
-//     //             )
-//     //             .arg(
-//     //                 Arg::with_name("v6") // Add an argument named "v6".
-//     //                     .long("v6") // Set the long-form flag name for this argument.
-//     //                     .help("Indicate we're requesting ipv6 iptables"), // Set a description of this argument.
-//     //             )
-//     //             .arg(
-//     //                 Arg::with_name("file") // Add an argument named "file".
-//     //                     .value_name("FILE") // Set the value name that will be shown in the help message.
-//     //                     .required(true) // Indicate that this argument is required.
-//     //                     .takes_value(true) // Indicate that this argument takes a value.
-//     //                     .help("The iptables file to set"), // Set a description of this argument.
-//     //             ),
-//     //     )
-//     //     .get_matches(); // Parse the command line arguments and return a `clap::ArgMatches` struct.
-
-//     // Return an `Ok` value indicating success.
-//     Ok(())
-// }
-    
